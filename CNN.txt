@@ -1,0 +1,131 @@
+#Load libraries
+import numpy as np
+import pandas as pd
+import string
+import re
+import matplotlib.pyplot as plt
+import seaborn as sns 
+import os
+
+
+#Load NLP libraries
+from sklearn import metrics
+import nltk
+from nltk.corpus import stopwords
+from nltk import FreqDist
+from sklearn import preprocessing
+from sklearn.model_selection import train_test_split, KFold
+from nltk.corpus import stopwords
+from nltk.stem.snowball import PorterStemmer
+from nltk import word_tokenize
+StopWords = set(stopwords.words('english')) 
+
+from keras.models import Sequential
+from keras.layers.recurrent import LSTM, GRU
+from keras.layers.core import Dense, Activation, Dropout
+from keras.layers.embeddings import Embedding
+from keras.layers.normalization import BatchNormalization
+from keras.utils import np_utils
+from keras.layers import GlobalMaxPooling1D, Conv1D, MaxPooling1D, Flatten, Bidirectional, SpatialDropout1D
+from keras.preprocessing import sequence, text
+from keras.callbacks import EarlyStopping
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
+from keras.engine import input_layer
+from keras.models import Model
+from keras.layers import Input, Dense
+
+#Load the datasets
+Spooky_Train = pd.read_csv('./train.csv')
+Spooky_Test = pd.read_csv('./test.csv')
+
+#Encode Author variable from training dataset
+from sklearn.preprocessing import LabelEncoder,OneHotEncoder
+y=Spooky_Train.author.values
+LC = LabelEncoder()
+y= LC.fit_transform(y)
+
+#Get Glove embeddings
+# load the GloVe vectors in a dictionary:
+from tqdm import tqdm
+embeddings_index = {}
+f = open('F:\\DataScience\\DataSets\\NLP\\glove.6B.300d.txt',encoding="utf8")
+for line in tqdm(f):
+    values = line.split()
+    word=values[0]
+    coef = np.asarray(values[1:],dtype='float32')
+    embeddings_index[word]=coef
+f.close()
+print('Found %s word vectors.' % len(embeddings_index))
+
+# Text feature preprocesing and glove vector creation
+
+def TextSanitize(s):
+       words = str(s).lower()
+       words = word_tokenize(words)
+       M = []
+       for w in words:
+              try:
+                     M.append(embeddings_index[w])
+                     #print(M)
+              except:
+                     continue
+       M = np.array(M)
+       v = M.sum(axis=0)
+       if type(v) != np.ndarray:
+              return np.zeros(300)
+       return (v / np.sqrt((v ** 2).sum()))
+   
+# create sentence vectors using the above function for training and validation set
+xtrain_glove = [TextSanitize(x) for x in tqdm(Spooky_Train.text.values)]
+xtrain_glove_array = np.array(xtrain_glove)
+
+# scale the data before any neural net:
+scl = preprocessing.StandardScaler()
+xtrain_glove_scl = scl.fit_transform(xtrain_glove_array)
+
+MAX_SEQUENCE_LENGTH = 1000
+MAX_NUM_WORDS = 25943
+EMBEDDING_DIM = 300 
+VALIDATION_SPLIT = 0.2
+
+tokenizer = Tokenizer(num_words=MAX_NUM_WORDS)
+tokenizer.fit_on_texts(Spooky_Train.text.values)
+sequences = tokenizer.texts_to_sequences(Spooky_Train.text.values)
+word_index = tokenizer.word_index
+spookydata= pad_sequences(sequences, maxlen=MAX_SEQUENCE_LENGTH)
+labels = np_utils.to_categorical(np.asarray(y))
+
+kxtrain, kxvalid, kytrain, kyvalid = train_test_split(data, labels, 
+                                                  stratify=y, 
+                                                  random_state=412, 
+                                                  test_size=VALIDATION_SPLIT, shuffle=True)
+												  
+#Preparing the Embedding layer
+embedding_matrix = np.zeros((len(word_index) + 1, EMBEDDING_DIM))
+for word, i in word_index.items():
+    embedding_vector = embeddings_index.get(word)
+    if embedding_vector is not None:
+        # words not found in embedding index will be all-zeros.
+        embedding_matrix[i] = embedding_vector		
+
+sequence_input = input_layer.Input(shape=(MAX_SEQUENCE_LENGTH,), dtype='int32')
+embedded_sequences = embedding_layer(sequence_input)
+x = Conv1D(128, 5, activation='relu')(embedded_sequences)
+x = MaxPooling1D(5)(x)
+x = Conv1D(128, 5, activation='relu')(x)
+x = MaxPooling1D(5)(x)
+x = Conv1D(128, 5, activation='relu')(x)
+x = MaxPooling1D(35)(x)  # global max pooling
+x = Flatten()(x)
+x = Dense(128, activation='relu')(x)
+preds = Dense(3, activation='softmax')(x)
+
+model = Model(sequence_input, preds)
+model.compile(loss='categorical_crossentropy',
+              optimizer='rmsprop',
+              metrics=['acc'])
+
+model.fit(kxtrain, kytrain, validation_data=(kxvalid, kyvalid),
+          epochs=5, batch_size=128)
+		  
